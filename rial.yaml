@@ -1,0 +1,15 @@
+url: "rial-digital-api-endpoint"
+metrics:
+  - id: "rial_digital_transactions"
+    type: "API_METRICS"
+    extract:
+      channel: 
+        jsonpath: "$[*].appKey"
+      transaction_type: 
+        jsonpath: "$[*].transactionType"
+      time_list: 
+        jsonpath: "$[*].statusData[*].time"
+      success_list: 
+        jsonpath: "$[*].statusData[*].SUCCESS"
+      failed_list: 
+        jsonpath: "$[*].statusData[*].FAILED"
