@@ -1,0 +1,16 @@
+# Source: monitoring_api.txt (Highcharts)
+# Extracted via accessibility tags. Example chart holds exactly 19 data points per series.
+url: "http://legacy-monitor.local/api-monitor"
+type: "HTTP_DOC"
+extract:
+  channel:
+    type: "static"
+    value: "unknown"
+  success_list:
+    type: "xpath"
+    # Extracts comma-separated time and value strings: "11:27:50, 3. success." (19 nodes per chart)
+    query: '//div[@data-highcharts-chart]//*[contains(@class, "highcharts-markers") and contains(@class, "highcharts-series-0")]//*[contains(@class, "highcharts-point")]/@aria-label'
+  failed_list:
+    type: "xpath"
+    # Extracts comma-separated time and value strings: "11:27:50, 0. failed." (19 nodes per chart)
+    query: '//div[@data-highcharts-chart]//*[contains(@class, "highcharts-markers") and contains(@class, "highcharts-series-1")]//*[contains(@class, "highcharts-point")]/@aria-label'

@@ -1,0 +1,20 @@
+# Source: monitoring-switch-2.txt (FusionCharts)
+# 4 visible charts. Expecting 4 bank names and 40 values per metric series.
+url: "http://legacy-monitor.local/switch-2"
+type: "HTTP_DOC"
+extract:
+  channel:
+    type: "xpath"
+    # Extracts exactly 4 bank-name nodes (e.g., "کانال هریم صادرکنندگی")
+    query: "//div[starts-with(@id,'chartdiv')]/span[starts-with(@id,'ChartId')]/svg//*[local-name()='g' and contains(concat(' ',normalize-space(@class),' '),' caption ')]//*[local-name()='tspan']"
+  time_list:
+    type: "static"
+    value: "1 minute"
+  success_list:
+    type: "xpath"
+    # First datalabel group (Green/Success) - Extracts 40 nodes
+    query: "//div[starts-with(@id,'chartdiv')]/span[starts-with(@id,'ChartId')]/svg//*[local-name()='g' and contains(@class,'datalabel')][1]//*[local-name()='tspan']"
+  failed_list:
+    type: "xpath"
+    # Second datalabel group (Red/Failed) - Extracts 40 nodes
+    query: "//div[starts-with(@id,'chartdiv')]/span[starts-with(@id,'ChartId')]/svg//*[local-name()='g' and contains(@class,'datalabel')][2]//*[local-name()='tspan']"

@@ -1,0 +1,20 @@
+# Source: monitoring-switch-1.txt (FusionCharts)
+# Dashboard contains 16 charts. Expecting ~160 nodes per metric series ($16 \times 10$).
+url: "http://legacy-monitor.local/switch-1"
+type: "HTTP_DOC"
+extract:
+  channel:
+    type: "static"
+    value: "unknown"
+  time_list:
+    type: "xpath"
+    # Extracts ~160 time nodes (e.g., "11:18") across 16 charts
+    query: '//span[starts-with(@id, "ChartId")]//svg//g[contains(@class, "dataset-Label-group")]//text//tspan'
+  success_list:
+    type: "xpath"
+    # First datalabel group is success (green). Extracts ~160 nodes.
+    query: '//span[starts-with(@id, "ChartId")]//svg//g[contains(@class, "datalabel")][1]//tspan'
+  failed_list:
+    type: "xpath"
+    # Second datalabel group is failed (red). Extracts ~160 nodes.
+    query: '//span[starts-with(@id, "ChartId")]//svg//g[contains(@class, "datalabel")][2]//tspan'
