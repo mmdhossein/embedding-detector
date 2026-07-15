@@ -1,81 +1,112 @@
+import json
 import yaml
-import requests
-import logging
 from lxml import html
-from jsonpath_ng import parse
+import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 
-def extract_values(document, query_config, doc_type):
-    q_type = query_config.get('type')
-    query = query_config.get('query', '')
-    
-    if q_type == 'static':
-        return [query_config.get('value')]
-        
-    if doc_type == 'HTTP_DOC' and q_type == 'xpath':
-        # lxml xpath execution
-        nodes = document.xpath(query)
-        return [str(node.text_content() if hasattr(node, 'text_content') else node).strip() for node in nodes]
-        
-    if doc_type == 'API_METRICS' and q_type == 'jsonpath':
-        # jsonpath_ng execution
-        jsonpath_expr = parse(query)
-        return [match.value for match in jsonpath_expr.find(document)]
-        
+def extract_json_value(data, path):
+    """Pure Python deep extraction for dot-notation paths."""
+    if not path: return []
+    keys = path.split('.')
+
+    def traverse(obj, key_queue):
+        if not key_queue:
+            return obj
+        current_key = key_queue[0]
+
+        if isinstance(obj, dict):
+            return traverse(obj.get(current_key), key_queue[1:])
+        elif isinstance(obj, list):
+            # Recurse through arrays and flatten the results
+            extracted = [traverse(item, key_queue) for item in obj]
+            result = []
+            for res in extracted:
+                if isinstance(res, list):
+                    result.extend(res)
+                elif res is not None:
+                    result.append(res)
+            return result
+        return None
+
+    return traverse(data, keys)
+
+def extract_values(payload_item, query, doc_type):
+    """Unified extractor for both JSON traversal and XPath."""
+    if doc_type == "HTTP_DOC":
+        try:
+            tree = html.fromstring(payload_item)
+            return [str(r).strip() for r in tree.xpath(query) if str(r).strip()]
+        except Exception as e:
+            logging.error(f"XPath extraction failed: {e}")
+            return []
+
+    elif doc_type == "API_METRICS":
+        res = extract_json_value(payload_item, query)
+        return res if isinstance(res, list) else [res] if res else []
+
     return []
 
-def harvest_metrics(yaml_files):
-    unified_metrics = []
+def get_raw_data(url):
+    with open(url, 'r', encoding='utf-8') as f:
+        return f.read()
 
-    for file_path in yaml_files:
-        with open(file_path, 'r') as f:
-            config = yaml.safe_load(f)
-            
-        url = config['url']
-        doc_type = config['type']
-        extract_rules = config['extract']
+def harvest_metrics(yaml_config_path):
+    """Harvests and normalizes metrics into a strict structural format per item."""
+    with open(yaml_config_path, 'r') as f:
+        config = yaml.safe_load(f)
         
-        logging.info(f"Interrogating {url} [{doc_type}]")
+    doc_type = config.get('type')
+    raw_content = get_raw_data(config.get('url'))
+    
+    # Ensure payload is iterable. API_METRICS iterates over 'results', HTTP_DOC iterates once over the raw string.
+    if doc_type == "API_METRICS":
+        parsed_data = json.loads(raw_content)
+        payload_items = parsed_data.get("results", []) if isinstance(parsed_data, dict) else parsed_data
+        if not isinstance(payload_items, list):
+            payload_items = [payload_items]
+    else:
+        payload_items = [raw_content]
+
+    aggregated_metrics = []
+
+    for metric in config.get('metrics', []):
+        metric_id = metric.get('id', 'unknown_metric')
+        extract_rules = metric.get('extract', {})
         
-        try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            
-            # Prepare the carcass for dissection
-            if doc_type == 'HTTP_DOC':
-                document = html.fromstring(response.content)
-            else:
-                document = response.json()
-                
-            # Extract raw organs
-            extracted_data = {
-                key: extract_values(document, rule, doc_type)
-                for key, rule in extract_rules.items()
+        # Iterate over each item (each dictionary in results) to create separate metric blocks
+        for item in payload_items:
+            metric_struct = {
+                "metric_id": metric_id,
+                "channel": "unknown",
+                "transaction_type": "unknown",
+                "time_list": [],
+                "success_list": [],
+                "failed_list": []
             }
-            
-            # Normalize list lengths (padding static/short lists)
-            max_len = max((len(v) for v in extracted_data.values()), default=0)
-            for k, v in extracted_data.items():
-                if len(v) == 1 and max_len > 1:
-                    extracted_data[k] = v * max_len # Duplicate static values (like channel or time)
-                elif len(v) < max_len:
-                    extracted_data[k] = v + [0] * (max_len - len(v)) # Null fallback
-                    
-            # Stitch them together
-            for i in range(max_len):
-                metric = {key: extracted_data[key][i] for key in extracted_data}
-                metric['source'] = url
-                unified_metrics.append(metric)
-                
-            logging.info(f"Successfully harvested {max_len} metrics from {url}.")
-            
-        except Exception as e:
-            logging.error(f"Failed to harvest from {url}: {str(e)}")
 
-    return unified_metrics
+            for target_key, rule in extract_rules.items():
+                query = rule.get('query')
+                if query and target_key in metric_struct:
+                    metric_struct[target_key] = extract_values(item, query, doc_type)
 
-# Execute the harvest
-# configs = ['switch1.yaml', 'api.yaml', 'switch2.yaml', 'json.yaml']
-# results = harvest_metrics(configs)
-# logging.info(f"Total metrics accumulated: {len(results)}")
+            # Flatten scalar metadata (channel, transaction_type)
+            for scalar in ['channel', 'transaction_type']:
+                if metric_struct[scalar] and isinstance(metric_struct[scalar], list):
+                    metric_struct[scalar] = metric_struct[scalar][0]
+
+            # Only append if we actually found something for this block, avoiding ghost metrics
+            if metric_struct['time_list'] or metric_struct['success_list']:
+                aggregated_metrics.append(metric_struct)
+
+    return aggregated_metrics
+
+if __name__ == "__main__":
+    yaml_file = './rial.yaml'
+    
+    try:
+        results = harvest_metrics(yaml_file)
+        logging.info(f"Total metric blocks accumulated: {len(results)}")
+        logging.info(f"Output Payload:\n{json.dumps(results, indent=2)}")
+    except Exception as e:
+        logging.error(f"Failed to harvest metrics: {e}")
